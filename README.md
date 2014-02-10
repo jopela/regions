@@ -1,0 +1,4 @@
+regions
+=======
+
+regional guides generation
