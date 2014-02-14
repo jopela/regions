@@ -6,10 +6,20 @@ import os
 import sys
 
 from iso3166 import countries
+from mtriputils import list_guides
 
 def main():
 
     parser = argparse.ArgumentParser()
+
+    city_guide_filename_default = 'result.json'
+    parser.add_argument(
+            '-f',
+            '--filename',
+            help='the city guides filename. Default to {0} if '\
+                    ' not specified'.format(city_guide_filename_default),
+            default = city_guide_filename_default
+            )
 
     country_default = countries['Canada'].alpha3
     parser.add_argument(
@@ -59,6 +69,25 @@ def main():
             action='store_true'
             )
 
+    target_dir_default = './target'
+    parser.add_argument(
+            '-t',
+            '--target-path',
+            help='the target directory to which the resulting guides will be'\
+                    ' saved. Default to {0} if no'\
+                    ' directory is specified.'.format(target_dir_default),
+            default = target_dir_default
+            )
+
+    guide_path_default = './'
+    parser.add_argument(
+            '-g',
+            '--guide-path',
+            help='the folder that contain the city guides.'\
+            ' Default to {0} if not specified'.format(guide_path_default),
+            default = guide_path_default
+            )
+
     args = parser.parse_args()
 
     # log config.
@@ -74,7 +103,7 @@ def main():
         logging.info('exit success')
         exit(0)
 
-    # country code assignement and validation.
+    # country codes assignement and validation.
     if 'ALL' in args.countries:
         valid_iso_codes = [c.alpha3 for c in countries]
     else:
@@ -90,8 +119,19 @@ def main():
             ' for {0} countries'.format(len(valid_iso_codes)))
 
     # regional guide generation.
-    print("my super regional guides",args.countries)
+    regions(valid_iso_codes, args.guide_path, args.target_path, args.filename)
+
+    logging.info('regional guide generation terminated')
+
     return
+
+def serialize_guides(regional_guides, target_path):
+    """
+    serialize the guide data structures to disk, saving the result to
+    target_path.
+    """
+
+    return None
 
 def config_logger(filename, debug):
     """
@@ -109,8 +149,7 @@ def config_logger(filename, debug):
 def valid_country(alpha3):
     """
     returns True if the given alpha3 code match an existing country. False
-    other wise
-    Will log the invalid match in the log file.
+    otherwise.  Will log the invalid match in the log file.
     """
 
     is_country = True
@@ -119,19 +158,38 @@ def valid_country(alpha3):
     except KeyError:
         logging.warning('alpha3 code {0} is not a valid'\
                 ' country code. It will not be processed. Please invoke the'\
-                ' program with the -C flag for the list of valid iso 3166' \
-                ' alpha3 country codes '.format(alpha3))
+                ' program with the -C flag for the list of valid iso 3166'\
+                ' alpha3 country codes'.format(alpha3))
         is_country = False
 
     return is_country
 
-def regions(countries, guide_path, target_directory):
+def regions(countries, guide_path, target_directory, city_filename):
     """
     generate regional guides for countries from the city guides found in
     guide_path and save the resulting guide in target_directory.
     """
 
+    # list the leaf guides that can be found under the given path.
+    city_guide_files = list_guides(guide_path, city_filename)
+
+    for country in countries:
+        # filter the list for the guides that are in this country
+
+
+
     return None
+
+def guide_in_country(guide_filename, alpha3, endpoint):
+    """
+    Interrogate the SPARQL endpoint to see if the given guide resides in
+    the country specified by the iso3166 alpha3 country code
+    """
+
+    query_template ="""
+    select ?uri
+
+    return True
 
 def country_code_list():
     """
