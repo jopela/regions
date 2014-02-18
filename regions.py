@@ -5,8 +5,13 @@ import logging
 import os
 import sys
 
+import mtriputils
+
 from iso3166 import countries
 from mtriputils import list_guides
+from cityinfo import filecityinfo
+from cityres import cityres
+
 
 def main():
 
@@ -119,7 +124,11 @@ def main():
             ' for {0} countries'.format(len(valid_iso_codes)))
 
     # regional guide generation.
-    regions(valid_iso_codes, args.guide_path, args.target_path, args.filename)
+    regions(valid_iso_codes,
+            args.guide_path,
+            args.target_path,
+            args.filename,
+            args.endpoint)
 
     logging.info('regional guide generation terminated')
 
@@ -164,7 +173,7 @@ def valid_country(alpha3):
 
     return is_country
 
-def regions(countries, guide_path, target_directory, city_filename):
+def regions(countries, guide_path, target_directory, city_filename, endpoint):
     """
     generate regional guides for countries from the city guides found in
     guide_path and save the resulting guide in target_directory.
@@ -174,9 +183,10 @@ def regions(countries, guide_path, target_directory, city_filename):
     city_guide_files = list_guides(guide_path, city_filename)
 
     for country in countries:
-        # filter the list for the guides that are in this country
-
-
+        # filter the list for the guides that are in this country.
+        country_guides_file = [g for g in city_guide_files if guide_in_country(g, country.alpha3, endpoint)]
+        print("here are the filename for the following country")
+        print("country:{0}".format(country.name),country_guides)
 
     return None
 
@@ -184,12 +194,95 @@ def guide_in_country(guide_filename, alpha3, endpoint):
     """
     Interrogate the SPARQL endpoint to see if the given guide resides in
     the country specified by the iso3166 alpha3 country code
+
+    EXAMPLE
+    =======
+
+    >>> guide_in_country('/root/dev/regions/test/Boston-48/result.json', 'USA', 'http://datastore:8890/sparql')
+    True
+
+    >>> guide_in_country('/root/dev/regions/test/Boston-48/result.json', 'CAN', 'http://datastore:8890/sparql')
+    False
+
     """
 
-    query_template ="""
-    select ?uri
+    # open the guide and find its dbpedia resource.
+    search = filecityinfo(guide_filename)
+    resource = cityres(search, endpoint)
 
-    return True
+    # find the country resource of the guide.
+    if not resource:
+        logging.warning("could not find a dbpedia resource for guide {0}".format(guide_filename))
+        return False
+
+    country_resource_1 = guide_country_res(resource, endpoint)
+
+    if not country_resource_1:
+        logging.warning("could not find a country reference for {0} associated to guide {1}".format(country_resource_1, guide_filename))
+        return False
+
+    # find the country resource of the given alpha3 country code.
+    country_resource_2 = alpha3_country_res(alpha3, endpoint)
+
+    if not country_resource_2:
+        logging.warning("could not find a country reference for code {0}".format(country_resource_2, alpha3))
+        return False
+
+    return country_resource_1 == country_resource_2
+
+
+def alpha3_country_res(alpha3, endpoint):
+    """
+    given an iso-3166 alpha3 country code, return the associated country resource.
+
+    EXAMPLE
+    =======
+
+    >>> alpha3_country_res('CAN','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Canada'
+
+    >>> alpha3_country_res('ABW','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Aruba'
+
+    >>> alpha3_country_res('USA','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/United_States'
+    """
+
+    # prepare the query to the sparql endpoint
+    query_template = """ select ?uri where {{ ?gadm <http://gadm.geovocab.org/ontology#iso> '{0}' .  ?gadm <http://www.w3.org/2002/07/owl#sameAs> ?uri .  ?uri a dbowl:Country . }} """
+
+    query_instance = query_template.format(alpha3)
+    query_result = mtriputils.sparql_query(query_instance, endpoint)
+
+    if len(query_result) > 0:
+        return query_result[0][0]
+    else:
+        return None
+
+def guide_country_res(guide_res, endpoint):
+    """
+    given a guide dbpedia resource, return it's country resource.
+
+    EXAMPLE
+    =======
+
+    >>> guide_country_res('http://dbpedia.org/resource/Montreal','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Canada'
+
+    """
+
+    # build the query to get the country.
+    query_template = """ select ?country where {{ <{0}> dbowl:country ?country .}} """
+
+    query_instance = query_template.format(guide_res)
+    # sends the request to the endpoint.
+    query_result = mtriputils.sparql_query(query_instance, endpoint)
+
+    # return the first element of the first tuple.
+    if len(query_result) > 0:
+        return query_result[0][0]
+    else:
+        return None
 
 def country_code_list():
     """
@@ -197,7 +290,7 @@ def country_code_list():
     ('country name', 'alpha3 code')
     """
 
-    result = [ (c.name,c.alpha3) for c in countries]
+    result = [(c.name,c.alpha3) for c in countries]
     return result
 
 if __name__ == '__main__':
