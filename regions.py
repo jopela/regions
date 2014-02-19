@@ -11,7 +11,7 @@ from iso3166 import countries
 from mtriputils import list_guides
 from cityinfo import filecityinfo
 from cityres import cityres
-
+from filecache import filecache
 
 def main():
 
@@ -38,7 +38,7 @@ def main():
             default = [country_default],
             )
 
-    sparql_endpoint_default = 'http://192.168.1.202:8890/sparql'
+    sparql_endpoint_default = 'http://datastore:8890/sparql'
     parser.add_argument(
             '-e',
             '--endpoint',
@@ -93,6 +93,13 @@ def main():
             default = guide_path_default
             )
 
+    parser.add_argument(
+            '-r',
+            '--resources',
+            help = 'dump the resources for all the iso-3166 country.',
+            action='store_true'
+            )
+
     args = parser.parse_args()
 
     # log config.
@@ -104,7 +111,14 @@ def main():
 
     if args.country_list:
         for c in country_code_list():
-            print(c[0],":",c[1])
+            print(c[1],":",c[0])
+        logging.info('exit success')
+        exit(0)
+
+    if args.resources:
+        for c in country_code_list():
+            res = alpha3_country_res(c[1], args.endpoint)
+            print(c[1],":",c[0],":",res)
         logging.info('exit success')
         exit(0)
 
@@ -136,7 +150,7 @@ def main():
 
 def serialize_guides(regional_guides, target_path):
     """
-    serialize the guide data structures to disk, saving the result to
+    Serialize the guide data structures to disk, saving the result to
     target_path.
     """
 
@@ -144,7 +158,7 @@ def serialize_guides(regional_guides, target_path):
 
 def config_logger(filename, debug):
     """
-    configures the logging library according to our needs.
+    Configures the logging library according to our needs.
     """
 
     logging_level = logging.DEBUG if debug else logging.INFO
@@ -157,7 +171,7 @@ def config_logger(filename, debug):
 
 def valid_country(alpha3):
     """
-    returns True if the given alpha3 code match an existing country. False
+    Returns True if the given alpha3 code match an existing country. False
     otherwise.  Will log the invalid match in the log file.
     """
 
@@ -175,20 +189,33 @@ def valid_country(alpha3):
 
 def regions(countries, guide_path, target_directory, city_filename, endpoint):
     """
-    generate regional guides for countries from the city guides found in
+    Generate regional guides for countries from the city guides found in
     guide_path and save the resulting guide in target_directory.
     """
 
-    # list the leaf guides that can be found under the given path.
+    # List the leaf guides that can be found under the given path.
     city_guide_files = list_guides(guide_path, city_filename)
 
-    for country in countries:
-        # filter the list for the guides that are in this country.
-        country_guides_file = [g for g in city_guide_files if guide_in_country(g, country.alpha3, endpoint)]
-        print("here are the filename for the following country")
-        print("country:{0}".format(country.name),country_guides)
+    # Compute the country of every guide.
+    country_guide_list_countries = [country_guide_list(c, endpoint) for c in city_guide_files]
 
-    return None
+    return country_guide_list_countries
+
+def country_guide_list(guide, endpoint):
+    """
+    Given a guide, return the iso3166 country to which it belongs.
+    """
+
+    candidate_countries = [c.alpha3 for c in countries]
+    res = None
+
+    for candidate in candidate_countries:
+        print('trying:{0} for {1}'.format(candidate, guide))
+        if guide_in_country(guide, candidate, endpoint):
+            res = (candidate, guide)
+            break
+
+    return res
 
 def guide_in_country(guide_filename, alpha3, endpoint):
     """
@@ -215,7 +242,8 @@ def guide_in_country(guide_filename, alpha3, endpoint):
         logging.warning("could not find a dbpedia resource for guide {0}".format(guide_filename))
         return False
 
-    country_resource_1 = guide_country_res(resource, endpoint)
+    unquote_resource = mtriputils.rem_quote(resource)
+    country_resource_1 = guide_country_res(unquote_resource, endpoint)
 
     if not country_resource_1:
         logging.warning("could not find a country reference for {0} associated to guide {1}".format(country_resource_1, guide_filename))
@@ -230,10 +258,9 @@ def guide_in_country(guide_filename, alpha3, endpoint):
 
     return country_resource_1 == country_resource_2
 
-
 def alpha3_country_res(alpha3, endpoint):
     """
-    given an iso-3166 alpha3 country code, return the associated country resource.
+    Given an iso-3166 alpha3 country code, return the associated country resource.
 
     EXAMPLE
     =======
@@ -252,6 +279,7 @@ def alpha3_country_res(alpha3, endpoint):
     query_template = """ select ?uri where {{ ?gadm <http://gadm.geovocab.org/ontology#iso> '{0}' .  ?gadm <http://www.w3.org/2002/07/owl#sameAs> ?uri .  ?uri a dbowl:Country . }} """
 
     query_instance = query_template.format(alpha3)
+
     query_result = mtriputils.sparql_query(query_instance, endpoint)
 
     if len(query_result) > 0:
@@ -261,7 +289,7 @@ def alpha3_country_res(alpha3, endpoint):
 
 def guide_country_res(guide_res, endpoint):
     """
-    given a guide dbpedia resource, return it's country resource.
+    Given a guide dbpedia resource, return it's country resource.
 
     EXAMPLE
     =======
@@ -286,7 +314,7 @@ def guide_country_res(guide_res, endpoint):
 
 def country_code_list():
     """
-    generates a list of tuple for every country. Tuples are of the form
+    Generates a list of tuple for every country. Tuples are of the form
     ('country name', 'alpha3 code')
     """
 
