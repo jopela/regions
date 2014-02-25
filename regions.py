@@ -5,13 +5,14 @@ import logging
 import os
 import sys
 
+from collections import defaultdict
+
 import mtriputils
 
 from iso3166 import countries
 from mtriputils import list_guides
 from cityinfo import filecityinfo
-from cityres import cityres
-from filecache import filecache
+from cityres import cityres, filecityres
 
 def main():
 
@@ -190,37 +191,200 @@ def valid_country(alpha3):
 def regions(countries, guide_path, target_directory, city_filename, endpoint):
     """
     Generate regional guides for countries from the city guides found in
-    guide_path and save the resulting guide in target_directory.
+    guide_path and save the resulting guide in target_directory. The
+    city_filename is the name of the result file (usually result.json) and
+    endpoint is a url to the SPARQL endpoint.
     """
 
-    # List the leaf guides that can be found under the given path.
-    city_guide_files = list_guides(guide_path, city_filename)
+    # Build the country set.
+    countries_set = set(countries)
 
-    # Compute the country of every guide.
-    country_guide_list_countries = [country_guide_list(c, endpoint) for c in city_guide_files]
+    # Generated guide set.
+    generated_countries_set = set()
 
-    return country_guide_list_countries
+    # Compute the dbpedia resource for each guide.
+    guide_filenames = list_guides(guide_path, city_filename)
 
-def country_guide_list(guide, endpoint):
+    if len(guide_filenames) < 1:
+        logging.error("could not find any guide files located under {0}".format(guide_path))
+        exit(-1)
+
+    guides_resources_city = [ (guide_filename, resource_city_guide(guide_filename, endpoint)) for guide_filename in guide_filenames ]
+
+    guides_resources_city_filtered = []
+    # report as error all the guide that have no dbpedia resource.
+    for grc in guides_resources_city:
+        if not grc[1]:
+            logging.error("Could not find a city resource for {0}. This guide will not be included in any regional guides".format(grc[0]))
+        else:
+            guides_resources_city_filtered.append(grc)
+
+    # Compute the country resource of the guides.
+    guides_country_resource = [ (t[0], country_resource_city_resource(t[1], endpoint)) for t in guides_resources_city_filtered ]
+
+    guides_country_resource_filtered = []
+    # report as error all the guides that have no dbpedia country resource.
+    for gcr in guides_country_resource:
+        if not  gcr[1]:
+            logging.error("Could not find a Country for guide filename {0} (dbres:{1}). This guide will not be included in any regional guides.".format(gcr[0], filecityres(gcr[0],endpoint)))
+        else:
+            guides_country_resource_filtered.append(gcr)
+
+    # Regroup the guide name by country.
+    res = regroup(guides_country_resource_filtered)
+
+    # Build the guides from the formed group if it is part of a country we want to generate.
+    guides = []
+    for country_resource, guide_filenames in res.items():
+        country_alpha3 = iso3166_resource_country_resource(country_resource, endpoint)
+        if not country_alpha3:
+            logging.error("Could not figure out the ISO3166 alpha3 country codes for the following country resource {0}. If this resource has".format(country_resource))
+
+        elif country_alpha3 in countries_set:
+            logging.info("building regional guide for {0}".format(country_alpha3))
+            region_guide = build_guide(country_resource, guide_filenames)
+            guides.append(region_guide)
+            generated_countries_set.add(country_alpha3)
+        else:
+            logging.info("resource {0} is not required for the current batch guide generation".format(country_resource))
+            pass
+
+    diff = countries_set.difference(generated_countries_set)
+    if len(diff) > 0:
+        logging.error("could not generate a guide for the following region(s):{0}".format(diff))
+
+    return
+
+def regroup(tuple_list):
     """
-    Given a guide, return the iso3166 country to which it belongs.
+    Bucket the guides into their corresponding country resource.
+
+    EXAMPLE
+    =======
+    >>> regroup([('/root/dev/regions/test/Montreal-269/result.json','http://dbpedia.org/resource/Canada'), ('/root/dev/regions/test/Quebec-269/result.json','http://dbpedia.org/resource/Canada'), ('/root/dev/regions/test/Paris-69/result.json','http://dbpedia.org/resource/France')])
+    defaultdict(<class 'list'>, {'http://dbpedia.org/resource/Canada': ['/root/dev/regions/test/Montreal-269/result.json', '/root/dev/regions/test/Quebec-269/result.json'], 'http://dbpedia.org/resource/France': ['/root/dev/regions/test/Paris-69/result.json']})
+    """
+    result = defaultdict(list)
+
+    for t in tuple_list:
+        result[t[1]].append(t[0])
+
+    return result
+
+def build_guide(country_resource, guide_filenames):
+    """
+    Construct a guide structure from the country_resource.
+
+    EXAMPLE
+    =======
+
+    >>> build_guide(guide_tuple, endpoint)
+
+    """
+    return None
+
+def iso3166_resource_country_resource(resource, endpoint):
+    """
+    From the dbpedia resource of a city, return the iso3166 code of it.
+
+    EXAMPLE
+    =======
+
+    >>> iso3166_resource_country_resource('http://dbpedia.org/resource/Canada','http://datastore:8890/sparql')
+    'CAN'
+
+    >>> iso3166_resource_country_resource('http://dbpedia.org/resource/France','http://datastore:8890/sparql')
+    'FRA'
+
+    >>> iso3166_resource_country_resource('http://dbpedia.org/resource/Russia','http://datastore:8890/sparql')
+    'RUS'
     """
 
-    candidate_countries = [c.alpha3 for c in countries]
-    res = None
+    query_template = """
+    select ?iso where
+    {{
+        ?gadm <http://gadm.geovocab.org/ontology#iso> ?iso .
+        ?gadm <http://www.w3.org/2002/07/owl#sameAs> <{0}> .
+    }}
+    """
 
-    for candidate in candidate_countries:
-        print('trying:{0} for {1}'.format(candidate, guide))
-        if guide_in_country(guide, candidate, endpoint):
-            res = (candidate, guide)
-            break
+    query_instance = query_template.format(resource)
+    query_result = mtriputils.sparql_query(query_instance, endpoint)
+
+    res = first_result(query_result)
 
     return res
+
+def country_resource_city_resource(resource, endpoint):
+    """
+    Return the country resource of a given city.
+
+    EXAMPLE
+    =======
+
+    >>> country_resource_city_resource('http://dbpedia.org/resource/Montreal','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Canada'
+
+    >>> country_resource_city_resource('http://dbpedia.org/resource/Moscow','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Russia'
+
+    >>> country_resource_city_resource('http://dbpedia.org/resource/Paris','http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/France'
+
+    >>> country_resource_city_resource('http://dbpedia.org/resource/Liverpool', 'http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/United_Kingdom'
+
+    """
+
+    query_template = """
+    select ?country where {{ <{0}> dbowl:country ?country }}
+    """
+
+    query_instance = query_template.format(resource)
+    query_result = mtriputils.sparql_query(query_instance, endpoint)
+
+    res = first_result(query_result)
+    return res
+
+def first_result(tuple_list):
+
+    if len(tuple_list) > 0 and len(tuple_list[0]) > 0:
+        return tuple_list[0][0]
+    else:
+        return None
+
+def resource_city_guide(guide_filename, endpoint):
+    """
+    from a guide filename, returns the dbpedia resource uri that represents
+    the city of the guide.
+
+    EXAMPLE
+    =======
+
+    >>> resource_city_guide('/root/dev/regions/test/London-269/result.json', 'http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/London'
+
+    >>> resource_city_guide('/root/dev/regions/test/Boston-48/result.json', 'http://datastore:8890/sparql')
+    'http://dbpedia.org/resource/Boston'
+    """
+
+    # open the guide up and get the city search string.
+    search = filecityinfo(guide_filename)
+
+    # get the dbpedia resource for that city.
+    resource = cityres(search, endpoint)
+
+    if not resource:
+        return None
+
+    clean = mtriputils.rem_quote(resource)
+
+    return clean
 
 def guide_in_country(guide_filename, alpha3, endpoint):
     """
     Interrogate the SPARQL endpoint to see if the given guide resides in
-    the country specified by the iso3166 alpha3 country code
+    the country specified by the iso3166 alpha3 country code.
 
     EXAMPLE
     =======
