@@ -14,6 +14,10 @@ from mtriputils import list_guides
 from cityinfo import filecityinfo
 from cityres import cityres, filecityres
 
+from filecache import filecache
+
+ADMIN_LEVEL_COUNTRY = 2
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -73,6 +77,43 @@ def main():
                     ' This is helpful when trying to determine the code for'\
                     ' the country you are trying to generate a guide for.',
             action='store_true'
+            )
+
+    hostname_default='162.243.24.168'
+    parser.add_argument(
+            '-H',
+            '--hostname-db',
+            help='the hostname of the database containing the FOI schema.'\
+                    ' will default to {0} if not specified'.format(
+                        hotname_default)
+            )
+
+    username_db_default='devmain',
+    parser.add_argument(
+            '-u',
+            '--username-db',
+            help='username used to access the database containing the FOI'\
+                    'schema. Will default to {0}'.format(username_db_default),
+            default=username_db_default
+
+    password_db_default='1guenBIHAJ',
+    parser.add_argument(
+            '-p',
+            '--password-db',
+            help='password used to access the database containing the FOI'\
+                    'schema. Will default to {0} if not specified'.format(
+                        password_db_default),
+            default=username_db_default
+            )
+
+    database_default = 'gis',
+    parser.add_argument(
+            '-D',
+            '--database-name',
+            help='the name of the database containing the FOI schema.'\
+                    ' Will default to {0} if not specified'.format(
+                        database_default),
+            default=database_default
             )
 
     target_dir_default = './target'
@@ -139,11 +180,16 @@ def main():
             ' for {0} countries'.format(len(valid_iso_codes)))
 
     # regional guide generation.
-    regions(valid_iso_codes,
+    regional_guides = regions(valid_iso_codes,
             args.guide_path,
-            args.target_path,
             args.filename,
-            args.endpoint)
+            args.endpoint,
+            args.hostname_db,
+            args.username_db,
+            args.password_db,
+            args.database_name)
+
+    serialize_guides(regional_guides, args.target_path)
 
     logging.info('regional guide generation terminated')
 
@@ -188,18 +234,15 @@ def valid_country(alpha3):
 
     return is_country
 
-def regions(countries, guide_path, target_directory, city_filename, endpoint):
+def regions(countries, guide_path, city_filename, endpoint, hostname,
+        username, password, database):
     """
-    Generate regional guides for countries from the city guides found in
-    guide_path and save the resulting guide in target_directory. The
-    city_filename is the name of the result file (usually result.json) and
-    endpoint is a url to the SPARQL endpoint.
+    return regional guides for countries from the city guides found in
+    guide_path. The city_filename is the name of the result file
+    (usually result.json) and endpoint is a url to the SPARQL endpoint.
     """
 
-    # Build the country set.
     countries_set = set(countries)
-
-    # Generated guide set.
     generated_countries_set = set()
 
     # Compute the dbpedia resource for each guide.
@@ -242,7 +285,7 @@ def regions(countries, guide_path, target_directory, city_filename, endpoint):
 
         elif country_alpha3 in countries_set:
             logging.info("building regional guide for {0}".format(country_alpha3))
-            region_guide = build_guide(country_resource, guide_filenames)
+            region_guide = build_guide(country_resource, guide_filenames, endpoint, hostname, username, password, database)
             guides.append(region_guide)
             generated_countries_set.add(country_alpha3)
         else:
@@ -253,7 +296,7 @@ def regions(countries, guide_path, target_directory, city_filename, endpoint):
     if len(diff) > 0:
         logging.error("could not generate a guide for the following region(s):{0}".format(diff))
 
-    return
+    return guides
 
 def regroup(tuple_list):
     """
@@ -271,18 +314,34 @@ def regroup(tuple_list):
 
     return result
 
-def build_guide(country_resource, guide_filenames):
+def build_guide(country_resource, guide_filenames, endpoint):
     """
     Construct a guide structure from the country_resource.
-
-    EXAMPLE
-    =======
-
-    >>> build_guide(guide_tuple, endpoint)
-
     """
+
+    # Figure out a name for the guide.
+    guide_iso = iso3166_resource_country_resource(country_resource, endpoint)
+    guide_name = countries[guide_iso].name
+    admin_level = ADMIN_LEVEL_COUNTRY
+
+    # gather the FOIs for the country. (changed for an RPC on a server later on?)
+    fois = country_foi(guide_iso, hostname, user, password, db)
+
+    children = []
+
     return None
 
+def country_foi(guide_iso, hostname, user, password, db):
+    """
+    Gathers the POI for a country based on.
+    """
+
+    fois = []
+
+    # Return all the FOI that are related to a given country.
+    return fois
+
+@filecache(None)
 def iso3166_resource_country_resource(resource, endpoint):
     """
     From the dbpedia resource of a city, return the iso3166 code of it.
